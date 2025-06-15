@@ -1,0 +1,37 @@
+{
+  "Academic": [
+    "README.md",
+    "data/raw",
+    "data/processed",
+    "code/scripts",
+    "code/notebooks",
+    "results/figures",
+    "results/tables",
+    "writing/manuscript",
+    "writing/refs",
+    "writing/notes.md",
+    "slides/assets"
+  ],
+  "Consulting": [
+    "README.md",
+    "client/briefs",
+    "client/contracts",
+    "data/raw",
+    "data/processed",
+    "code/notebooks",
+    "code/scripts",
+    "analysis",
+    "analysis/visuals",
+    "deliverables/draft",
+    "deliverables/final",
+    "slides/assets"
+  ],
+  "Personal": [
+    "README.md",
+    "data",
+    "code",
+    "output",
+    "docs",
+    "assets"
+  ]
+}
