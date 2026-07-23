@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -40,7 +41,9 @@ def request_json(session: requests.Session, url: str, params: dict, timeout: int
 
 
 def collect_portwatch(session: requests.Session) -> dict:
-    dictionary_payload = request_json(session, PORT_DICTIONARY_URL, {"where": "1=1", "outFields": "*", "returnGeometry": "false", "f": "json", "resultRecordCount": 1000})
+    dictionary_payload = request_json(session, PORT_DICTIONARY_URL, {
+        "where": "1=1", "outFields": "*", "returnGeometry": "false", "f": "json", "resultRecordCount": 1000,
+    })
     dictionary = pd.DataFrame(feature["attributes"] for feature in dictionary_payload.get("features", []))
     id_column = next(column for column in dictionary.columns if column.lower() == "portid")
     name_column = next(column for column in dictionary.columns if column.lower() in {"portname", "name"})
@@ -49,27 +52,36 @@ def collect_portwatch(session: requests.Session) -> dict:
     port_dictionary.to_csv(OUT / "portwatch_chokepoint_dictionary.csv", index=False)
 
     where = " OR ".join(f"portid='{port}'" for port in SELECTED_PORTS)
-    rows = []
+    rows: list[dict] = []
     offset = 0
+    page_size = 1000
     while True:
         payload = request_json(session, PORTWATCH_URL, {
             "where": where, "outFields": "*", "returnGeometry": "false", "f": "json",
-            "resultOffset": offset, "resultRecordCount": 2000, "orderByFields": "portid,date",
+            "resultOffset": offset, "resultRecordCount": page_size, "orderByFields": "portid,year,month,day,ObjectId",
         })
         batch = [feature["attributes"] for feature in payload.get("features", [])]
         rows.extend(batch)
-        if len(batch) < 2000:
+        if len(batch) < page_size:
             break
-        offset += 2000
+        offset += page_size
     daily = pd.DataFrame(rows)
     daily.columns = [str(column).strip() for column in daily.columns]
     daily["portid"] = daily["portid"].astype(str).str.lower()
-    daily["date"] = pd.to_datetime(pd.to_numeric(daily["date"], errors="coerce"), unit="ms", utc=True).dt.tz_localize(None)
+    # PortWatch currently carries reliable year/month/day components even when the
+    # ArcGIS date field is null.
+    daily["date"] = pd.to_datetime({
+        "year": pd.to_numeric(daily["year"], errors="coerce"),
+        "month": pd.to_numeric(daily["month"], errors="coerce"),
+        "day": pd.to_numeric(daily["day"], errors="coerce"),
+    }, errors="coerce")
     numeric = [column for column in daily.columns if column.startswith("n_") or column.startswith("capacity")]
     for column in numeric:
         daily[column] = pd.to_numeric(daily[column], errors="coerce")
-    daily = daily.merge(port_dictionary, on="portid", how="left", validate="many_to_one")
-    daily = daily.sort_values(["portid", "date"]).reset_index(drop=True)
+    daily = daily.drop(columns=[column for column in ["portname"] if column in daily.columns]).merge(
+        port_dictionary, on="portid", how="left", validate="many_to_one"
+    )
+    daily = daily.sort_values(["portid", "date"]).drop_duplicates(["portid", "date"], keep="last").reset_index(drop=True)
     daily.to_csv(OUT / "portwatch_daily_chokepoints_2019_2026.csv.gz", index=False, compression="gzip")
 
     baseline = daily[daily["date"].between("2025-02-28", "2026-02-27")].groupby("portid", as_index=False).agg(
@@ -92,6 +104,14 @@ def collect_portwatch(session: requests.Session) -> dict:
     }
 
 
+def parse_pink_month(value: object) -> pd.Timestamp:
+    text = str(value).strip()
+    match = re.fullmatch(r"(\d{4})M(\d{2})", text)
+    if not match:
+        return pd.NaT
+    return pd.Timestamp(int(match.group(1)), int(match.group(2)), 1)
+
+
 def collect_pink_sheet(session: requests.Session) -> dict:
     destination = RAW / "CMO-Historical-Data-Monthly.xlsx"
     response = session.get(PINK_URL, timeout=300)
@@ -99,14 +119,12 @@ def collect_pink_sheet(session: requests.Session) -> dict:
     destination.write_bytes(response.content)
     workbook = pd.ExcelFile(destination)
     raw = pd.read_excel(destination, sheet_name="Monthly Prices", header=None)
-    # Current workbook: names row 2, units row 3, provider codes row 4, data from row 6.
-    names = raw.iloc[2].copy()
-    units = raw.iloc[3].copy()
-    codes = raw.iloc[4].copy()
+    # July 2026 workbook: series names row 4, units row 5, data from row 6.
+    names = raw.iloc[4].copy()
+    units = raw.iloc[5].copy()
     data = raw.iloc[6:].copy()
-    date_column = data.columns[0]
-    data = data.rename(columns={date_column: "month"})
-    data["month"] = pd.to_datetime(data["month"], errors="coerce")
+    data = data.rename(columns={data.columns[0]: "month"})
+    data["month"] = data["month"].map(parse_pink_month)
     data = data.dropna(subset=["month"])
     column_records = []
     renames = {}
@@ -114,7 +132,7 @@ def collect_pink_sheet(session: requests.Session) -> dict:
     for column in data.columns[1:]:
         name = str(names.get(column, "")).strip()
         if not name or name.lower() == "nan":
-            name = str(codes.get(column, column)).strip()
+            name = f"series_{column}"
         unique = name
         suffix = 2
         while unique in used:
@@ -122,10 +140,10 @@ def collect_pink_sheet(session: requests.Session) -> dict:
             suffix += 1
         used.add(unique)
         renames[column] = unique
-        column_records.append({"series": unique, "commodity_name": name, "unit": str(units.get(column, "")).strip(), "provider_code": str(codes.get(column, "")).strip()})
+        column_records.append({"series": unique, "commodity_name": name, "unit": str(units.get(column, "")).strip(), "provider_code": unique})
     data = data.rename(columns=renames)
     for column in data.columns[1:]:
-        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column] = pd.to_numeric(data[column].replace({"…": np.nan, "..": np.nan, "": np.nan}), errors="coerce")
     data.to_csv(OUT / "world_bank_pink_sheet_monthly_wide.csv.gz", index=False, compression="gzip")
     long = data.melt(id_vars="month", var_name="series", value_name="value")
     metadata = pd.DataFrame(column_records)
@@ -147,7 +165,12 @@ def collect_geodist(session: requests.Session) -> dict:
     frame.to_csv(OUT / "cepii_geodist_full.csv.gz", index=False, compression="gzip")
     eu = frame[frame["iso_d"].isin(EU27_ALPHA3)].copy()
     eu.to_csv(OUT / "cepii_geodist_eu_pairs.csv.gz", index=False, compression="gzip")
-    return {"status": "ok", "url": GEODIST_URL, "bytes": destination.stat().st_size, "rows": int(len(frame)), "eu_rows": int(len(eu)), "columns": frame.columns.tolist()}
+    missing_destinations = sorted(EU27_ALPHA3 - set(frame["iso_d"].dropna().unique()))
+    return {
+        "status": "ok", "url": GEODIST_URL, "bytes": destination.stat().st_size,
+        "rows": int(len(frame)), "eu_rows": int(len(eu)), "columns": frame.columns.tolist(),
+        "missing_eu_destinations": missing_destinations,
+    }
 
 
 def main() -> None:
