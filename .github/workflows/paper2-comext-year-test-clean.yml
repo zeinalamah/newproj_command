@@ -1,0 +1,32 @@
+name: Paper 2 clean Comext year test
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'paper2/collect_comext_year.py'
+      - '.github/workflows/paper2-comext-year-test-clean.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy requests py7zr
+      - run: python paper2/collect_comext_year.py --year 2015 --out-dir output/comext_2015
+      - if: always()
+        run: |
+          cat output/comext_2015/audit_2015.json || true
+          find output/comext_2015 -maxdepth 1 -type f -printf '%f %s bytes\n' | sort || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper2-comext-year-2015-clean
+          path: output/comext_2015
+          retention-days: 7
+          if-no-files-found: error
