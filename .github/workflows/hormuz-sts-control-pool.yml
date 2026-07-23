@@ -1,0 +1,31 @@
+name: Hormuz STS manufacturing control pool
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'research/build_sts_control_pool.py'
+      - '.github/workflows/hormuz-sts-control-pool.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy requests
+      - run: python research/build_sts_control_pool.py
+      - if: always()
+        run: |
+          cat research_output/sts_control_pool/summary.json || true
+          tail -30 research_output/sts_control_pool/request_audit.csv || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sts-manufacturing-control-pool-2000-2026
+          path: research_output/sts_control_pool
+          if-no-files-found: error
+          retention-days: 7
