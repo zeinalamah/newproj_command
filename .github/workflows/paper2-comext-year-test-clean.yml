@@ -1,0 +1,63 @@
+name: Paper 2 long-history Comext build
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'paper2/collect_comext_year.py'
+      - 'paper2/combine_comext_years.py'
+      - '.github/workflows/paper2-comext-year-test-clean.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect-year:
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        year: [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy requests py7zr
+      - run: python paper2/collect_comext_year.py --year ${{ matrix.year }} --out-dir output/comext_${{ matrix.year }}
+      - if: always()
+        run: |
+          cat output/comext_${{ matrix.year }}/audit_${{ matrix.year }}.json || true
+          find output/comext_${{ matrix.year }} -maxdepth 1 -type f -printf '%f %s bytes\n' | sort || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper2-comext-${{ matrix.year }}
+          path: output/comext_${{ matrix.year }}
+          retention-days: 7
+          if-no-files-found: error
+
+  combine:
+    needs: collect-year
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: paper2-comext-*
+          path: downloaded_years
+      - run: python paper2/combine_comext_years.py
+      - run: |
+          cat output/comext_long_panel/comext_long_panel_summary.json
+          ls -lh output/comext_long_panel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper2-comext-long-panel-2002-2026
+          path: output/comext_long_panel
+          retention-days: 7
+          if-no-files-found: error
