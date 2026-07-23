@@ -4,6 +4,7 @@
 A query covers all reporters and partners for one product, indicator, and short
 time block. Blocks that exceed Eurostat's cell limit are recursively divided.
 Only EU27 import reporters and bilateral two-letter partners are retained.
+Comext reports net mass through QUANTITY_IN_100KG; this script converts it to kg.
 """
 from __future__ import annotations
 import argparse, json, random, time
@@ -18,7 +19,7 @@ from urllib3.util.retry import Retry
 
 BASE="https://ec.europa.eu/eurostat/api/comext/dissemination/statistics/1.0/data/ds-045409"
 EU27={"AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"}
-INDICATORS={"VALUE_IN_EUROS":"trade_value_eur","QUANTITY_IN_KG":"quantity_kg"}
+INDICATORS={"VALUE_IN_EUROS":"trade_value_eur","QUANTITY_IN_100KG":"quantity_100kg"}
 
 def ordered(payload:dict[str,Any], dim:str)->list[str]:
     idx=payload["dimension"][dim]["category"].get("index",{})
@@ -49,7 +50,10 @@ def request(s,product,indicator,start,end):
     url=f"{BASE}?{urlencode(params)}"; begun=time.time(); r=s.get(url,timeout=900); r.raise_for_status(); payload=r.json()
     if payload.get("error"):raise RuntimeError(payload["error"])
     df=jsonstat(payload)
-    return df,{"product":product,"indicator":indicator,"start":start,"end":end,"status":"ok","seconds":time.time()-begun,"bytes":len(r.content),"observations":len(df),"size":payload.get("size")}
+    returned=set(df["indicators"].astype(str)) if len(df) and "indicators" in df else set()
+    if len(df) and indicator not in returned:
+        raise RuntimeError(f"Requested indicator {indicator} but API returned {sorted(returned)}")
+    return df,{"product":product,"indicator":indicator,"start":start,"end":end,"status":"ok","seconds":time.time()-begun,"bytes":len(r.content),"observations":len(df),"size":payload.get("size"),"returned_indicators":"|".join(sorted(returned))}
 
 def recursive(s,product,indicator,start,end,depth=0):
     try:
@@ -80,9 +84,10 @@ def main():
     raw=raw[raw["reporter"].isin(EU27)&raw["partner"].astype(str).str.fullmatch(r"[A-Z]{2}")].copy(); raw["month"]=pd.to_datetime(raw["time"].astype(str)+"-01",errors="coerce")
     long=raw.groupby(["reporter","partner","month","indicators"],as_index=False).obs_value.sum(); wide=long.pivot_table(index=["reporter","partner","month"],columns="indicators",values="obs_value",aggfunc="sum").reset_index().rename_axis(columns=None)
     for source,target in INDICATORS.items():wide[target]=pd.to_numeric(wide[source],errors="coerce") if source in wide else np.nan
+    wide["quantity_kg"]=wide["quantity_100kg"]*100.0
     wide["hs6"]=args.product; wide.loc[wide.trade_value_eur.lt(0),"trade_value_eur"]=np.nan; wide.loc[wide.quantity_kg.lt(0),"quantity_kg"]=np.nan; wide["unit_value_eur_per_kg"]=np.where(wide.quantity_kg.gt(0),wide.trade_value_eur/wide.quantity_kg,np.nan)
     wide[["reporter","partner","month","hs6","trade_value_eur","quantity_kg","unit_value_eur_per_kg"]].sort_values(["reporter","partner","month"]).to_csv(args.out/f"comext_{args.product}_1988_2026.csv.gz",index=False,compression="gzip")
-    summary={"product":args.product,"rows":len(wide),"reporters":wide.reporter.nunique(),"partners":wide.partner.nunique(),"first_month":str(wide.month.min().date()),"latest_month":str(wide.month.max().date()),"successful_calls":sum(a.get("status")=="ok" for a in audits),"split_calls":sum(a.get("status")=="split" for a in audits),"terminal_failures":failures}
+    summary={"product":args.product,"rows":len(wide),"reporters":wide.reporter.nunique(),"partners":wide.partner.nunique(),"first_month":str(wide.month.min().date()),"latest_month":str(wide.month.max().date()),"positive_quantity_rows":int(wide.quantity_kg.fillna(0).gt(0).sum()),"successful_calls":sum(a.get("status")=="ok" for a in audits),"split_calls":sum(a.get("status")=="split" for a in audits),"terminal_failures":failures}
     (args.out/f"summary_{args.product}.json").write_text(json.dumps(summary,indent=2,default=str)); print(json.dumps(summary,indent=2),flush=True)
     if failures:raise SystemExit(2)
 if __name__=="__main__":main()
