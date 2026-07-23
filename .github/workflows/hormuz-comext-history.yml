@@ -1,0 +1,62 @@
+name: Hormuz long-history Comext build
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'research/collect_comext_product.py'
+      - 'research/combine_comext_products.py'
+      - '.github/workflows/hormuz-comext-history.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect-product:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        product: ['281410','281420','310210','310230','310240','310260','310280','760110','760120','760200','760310','760410']
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy requests
+      - name: Collect product history
+        run: python research/collect_comext_product.py --product ${{ matrix.product }} --start 1988-01 --end 2026-06 --out research_output/${{ matrix.product }}
+      - if: always()
+        run: cat research_output/${{ matrix.product }}/summary_${{ matrix.product }}.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comext-product-${{ matrix.product }}
+          path: research_output/${{ matrix.product }}
+          if-no-files-found: error
+          retention-days: 7
+  combine:
+    needs: collect-product
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: comext-product-*
+          path: research_output/product_artifacts
+          merge-multiple: false
+      - run: python research/combine_comext_products.py
+      - if: always()
+        run: cat research_output/comext_combined/build_summary.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comext-selected-1988-2026-combined
+          path: research_output/comext_combined
+          if-no-files-found: error
+          retention-days: 7
