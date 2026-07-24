@@ -1,0 +1,17 @@
+input/comtrade/omit_reporter.csv 10582 bytes
+input/comtrade/qatar.csv 1 bytes
+input/comtrade/test_results.json 12131 bytes
+input/sts/eurostat_ppi_industrial_production_2000_2026.csv.gz 282955 bytes
+input/sts/eurostat_sts_build_summary.json 232 bytes
+input/sts/eurostat_sts_coverage.csv 1383 bytes
+input/sts/eurostat_sts_request_audit.json 11405 bytes
+input/supplementary/cepii_geodist_eu_pairs.csv.gz 169286 bytes
+input/supplementary/cepii_geodist_full.csv.gz 1467177 bytes
+input/supplementary/portwatch_chokepoint_dictionary.csv 784 bytes
+input/supplementary/portwatch_daily_chokepoints_2019_2026.csv.gz 913063 bytes
+input/supplementary/portwatch_daily_chokepoints_with_baselines.csv.gz 1309720 bytes
+input/supplementary/raw/CMO-Historical-Data-Monthly.xlsx 575636 bytes
+input/supplementary/raw/dist_cepii.dta 1909446 bytes
+input/supplementary/supplementary_build_audit.json 1839 bytes
+input/supplementary/world_bank_pink_sheet_monthly_long.csv.gz 266868 bytes
+input/supplementary/world_bank_pink_sheet_monthly_wide.csv.gz 98342 bytes

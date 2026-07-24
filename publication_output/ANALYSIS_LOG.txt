@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/runner/work/newproj_command/newproj_command/paper2/run_full_analysis.py", line 23, in <module>
+    full_analysis.main()
+  File "/home/runner/work/newproj_command/newproj_command/paper2/full_analysis.py", line 1298, in main
+    focal, network, origin_month, coverage, trade_audit = build_trade_panels(args.comext_root, distance, paths)
+                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/newproj_command/newproj_command/paper2/full_analysis.py", line 273, in build_trade_panels
+    raise RuntimeError("No focal Comext observations were found")
+RuntimeError: No focal Comext observations were found
