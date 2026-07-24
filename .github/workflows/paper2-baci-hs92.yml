@@ -1,0 +1,48 @@
+name: Paper 2 BACI HS92 full history build
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'research/paper2_baci/collect_baci_hs92.py'
+      - '.github/workflows/paper2-baci-hs92.yml'
+  push:
+    branches: ['research/paper2-baci-20260724']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas
+      - name: Download CEPII BACI HS92 V202601
+        run: |
+          mkdir -p research_output/baci
+          curl -L --fail --retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30 \
+            -o research_output/baci/BACI_HS92_V202601.zip \
+            https://www.cepii.fr/DATA_DOWNLOAD/baci/data/BACI_HS92_V202601.zip
+          test -s research_output/baci/BACI_HS92_V202601.zip
+          ls -lh research_output/baci/BACI_HS92_V202601.zip
+      - name: Filter focal products and construct annual panels
+        run: python research/paper2_baci/collect_baci_hs92.py
+      - name: Remove raw archive
+        if: always()
+        run: rm -f research_output/baci/BACI_HS92_V202601.zip
+      - name: Show audit
+        if: always()
+        run: |
+          cat research_output/baci/baci_summary.json || true
+          tail -10 research_output/baci/baci_collection_audit.csv || true
+          find research_output/baci -maxdepth 1 -type f -printf '%f %s bytes\n' | sort || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paper2-baci-focal-1995-2024
+          path: research_output/baci
+          retention-days: 7
+          if-no-files-found: error
