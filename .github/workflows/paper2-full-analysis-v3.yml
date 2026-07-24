@@ -1,0 +1,119 @@
+name: Paper 2 full public-data analysis v3 logged
+
+on:
+  push:
+    branches: ['research/paper2-full-analysis-20260723']
+    paths:
+      - '.github/workflows/paper2-full-analysis-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  LONG_COMEXT_RUN: '30053839746'
+  SUPPLEMENTARY_RUN: '30053623096'
+  STS_RUN: '30053741426'
+  COMTRADE_RUN: '30054443336'
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/paper2-full-analysis-20260723
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pandas numpy scipy statsmodels pycountry pyarrow matplotlib tabulate openpyxl
+      - name: Wait for Comext year matrix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status=''
+          for attempt in $(seq 1 240); do
+            payload=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${LONG_COMEXT_RUN}")
+            status=$(printf '%s' "$payload" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+            echo "status=${status} attempt=${attempt}"
+            [ "$status" = completed ] && break
+            sleep 15
+          done
+          test "$status" = completed
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.LONG_COMEXT_RUN }}
+          pattern: paper2-comext-year-*
+          merge-multiple: true
+          path: input/comext
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.SUPPLEMENTARY_RUN }}
+          name: paper2-supplementary-public-data-clean
+          path: input/supplementary
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.STS_RUN }}
+          name: paper2-eurostat-sts-data
+          path: input/sts
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.COMTRADE_RUN }}
+          name: paper2-comtrade-global-test
+          path: input/comtrade
+      - name: Record input inventory
+        run: |
+          mkdir -p publication_output/audit
+          find input -type f -printf '%p %s bytes\n' | sort | tee publication_output/audit/input_inventory.txt
+          find input/comext -name 'comext_chapters_28_31_76_*.csv.gz' | sort | tee publication_output/audit/comext_year_files.txt
+      - name: Run complete analysis with persistent log
+        id: analysis
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python paper2/run_full_analysis.py --comext-root input/comext --supplementary-root input/supplementary --sts-root input/sts --comtrade-root input/comtrade --output-root publication_output 2>&1 | tee publication_output/ANALYSIS_LOG.txt
+      - name: Mark analysis status
+        if: always()
+        run: |
+          echo '${{ steps.analysis.outcome }}' > publication_output/ANALYSIS_OUTCOME.txt
+          if [ '${{ steps.analysis.outcome }}' != 'success' ]; then
+            echo 'The analysis command failed. See ANALYSIS_LOG.txt.' > publication_output/ANALYSIS_FAILED.txt
+          fi
+          if [ -s publication_output/EMPIRICAL_ANALYSIS_REPORT.md ]; then
+            rm -f publication_output/paper2_results_lite.zip
+            zip -r -9 publication_output/paper2_results_lite.zip publication_output/EMPIRICAL_ANALYSIS_REPORT.md publication_output/BUILD_AND_ANALYSIS_AUDIT.json publication_output/FILE_MANIFEST.csv publication_output/tables publication_output/figures publication_output/audit publication_output/scripts publication_output/ANALYSIS_LOG.txt publication_output/ANALYSIS_OUTCOME.txt || true
+          fi
+          find publication_output -type f -size +95M -print -delete
+      - name: Commit results or diagnostic log
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add publication_output
+          if ! git diff --cached --quiet; then
+            git commit -m '[skip ci] Add Paper 2 analysis results or diagnostic log'
+            git push origin HEAD:research/paper2-full-analysis-20260723
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paper2-publication-analysis-v3-logged
+          path: publication_output
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+      - name: Enforce successful analysis
+        if: steps.analysis.outcome != 'success'
+        run: exit 1
