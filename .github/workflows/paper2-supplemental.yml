@@ -26,19 +26,35 @@ jobs:
           curl -L --fail --retry 8 --retry-all-errors -o research_output/supplemental/dist_cepii.zip https://www.cepii.fr/distance/dist_cepii.zip
           curl -L --fail --retry 8 --retry-all-errors -o research_output/supplemental/CMO-Historical-Data-Monthly.xlsx https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Historical-Data-Monthly.xlsx
       - name: Parse supplemental datasets
+        continue-on-error: true
         run: python research/paper2_baci/collect_supplemental.py
-      - name: Remove downloaded source files
+      - name: Inspect workbook when parser fails
         if: always()
-        run: rm -f research_output/supplemental/dist_cepii.zip research_output/supplemental/CMO-Historical-Data-Monthly.xlsx research_output/supplemental/*.xls research_output/supplemental/*.xlsx
+        run: |
+          python - <<'PY'
+          import json, pandas as pd
+          p='research_output/supplemental/CMO-Historical-Data-Monthly.xlsx'
+          try:
+              x=pd.ExcelFile(p)
+              report={'sheets':x.sheet_names}
+              for s in x.sheet_names[:5]:
+                  report[s]=pd.read_excel(p,sheet_name=s,header=None,nrows=12).fillna('').astype(str).values.tolist()
+              open('research_output/supplemental/pink_sheet_schema_inspect.json','w').write(json.dumps(report,indent=2))
+              print(json.dumps(report,indent=2)[:12000])
+          except Exception as e:
+              open('research_output/supplemental/pink_sheet_schema_error.txt','w').write(repr(e))
+              print(repr(e))
+          PY
       - name: Show audit
         if: always()
         run: |
           cat research_output/supplemental/supplemental_summary.json || true
+          cat research_output/supplemental/pink_sheet_schema_inspect.json || true
           find research_output/supplemental -maxdepth 1 -type f -printf '%f %s bytes\n' | sort || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: paper2-geodist-pinksheet
+          name: paper2-geodist-pinksheet-raw
           path: research_output/supplemental
           retention-days: 7
           if-no-files-found: error
