@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   collect:
@@ -59,7 +60,6 @@ jobs:
           merge-multiple: false
       - name: Normalize artifact directories
         run: |
-          mkdir -p research_output/energy_intensive/normalized
           for y in $(seq 2015 2026); do
             src="research_output/energy_intensive/energy-intensive-$y"
             dst="research_output/energy_intensive/year_$y"
@@ -88,3 +88,11 @@ jobs:
             research_output/energy_intensive/build_summary.json
           if-no-files-found: error
           retention-days: 7
+      - name: Publish observable run ID
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Broad energy-intensive build run $GITHUB_RUN_ID" \
+            --body "run_id=$GITHUB_RUN_ID; commit=$GITHUB_SHA; artifact=energy-intensive-broad-panel-2015-2026; conclusion=${{ job.status }}"
