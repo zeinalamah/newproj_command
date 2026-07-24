@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Collect the four focal products from Comext for 2021–2023."""
 from __future__ import annotations
 import itertools,json,time
 from pathlib import Path
@@ -28,8 +29,7 @@ def parse(payload):
 
 def fetch(year,product):
     params=[('format','JSON'),('lang','en'),('freq','M'),('flow','1'),('product',product),('sinceTimePeriod',f'{year}-01'),('untilTimePeriod',f'{year}-12'),('indicators','VALUE_IN_EUROS'),('indicators','QUANTITY_IN_KG')]
-    url=BASE+'?'+urlencode(params)
-    last=None
+    url=BASE+'?'+urlencode(params); last=None
     with requests.Session() as s:
         s.headers.update({'User-Agent':'academic-hormuz-energy-research/1.0'})
         for a in range(10):
@@ -45,8 +45,7 @@ def main():
     for year,product in itertools.product(YEARS,PRODUCTS):
         payload,log=fetch(year,product);logs.append(log);print(log,flush=True)
         if log['status']!='ok':continue
-        raw=parse(payload)
-        required={'reporter','partner','time','indicators'}
+        raw=parse(payload); required={'reporter','partner','time','indicators'}
         if raw.empty or not required.issubset(raw.columns):log['parse_error']=f'columns {raw.columns.tolist()}';continue
         raw=raw[raw.reporter.isin(EU27)&raw.partner.str.fullmatch(r'[A-Z]{2}',na=False)].copy()
         if raw.empty:continue
@@ -56,7 +55,7 @@ def main():
             if c not in p:p[c]=np.nan
             p[c]=pd.to_numeric(p[c],errors='coerce')
         p['month']=pd.to_datetime(p.month.astype(str).str[:7]+'-01',errors='coerce');p['hs6']=product
-        p=p[['reporter','partner','month','hs6','trade_value_eur','quantity_kg']];frames.append(p)
+        frames.append(p[['reporter','partner','month','hs6','trade_value_eur','quantity_kg']])
     pd.DataFrame(logs).to_csv(OUT/'request_audit.csv',index=False)
     if not frames:raise RuntimeError('No Comext API data')
     d=pd.concat(frames,ignore_index=True).groupby(['reporter','partner','month','hs6'],as_index=False).agg(trade_value_eur=('trade_value_eur','sum'),quantity_kg=('quantity_kg','sum'))
