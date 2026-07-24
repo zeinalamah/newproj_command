@@ -1,0 +1,160 @@
+name: Paper 2 full public-data analysis
+
+on:
+  push:
+    branches: ['research/paper2-full-analysis-20260723']
+    paths:
+      - 'paper2/full_analysis.py'
+      - 'paper2/econometrics.py'
+      - '.github/workflows/paper2-full-analysis.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  PYTHONUNBUFFERED: '1'
+  LONG_COMEXT_RUN: '30053839746'
+  SUPPLEMENTARY_RUN: '30053623096'
+  STS_RUN: '30053741426'
+  COMTRADE_RUN: '30054443336'
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/paper2-full-analysis-20260723
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install analysis dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade pandas numpy scipy statsmodels pycountry pyarrow matplotlib tabulate openpyxl
+
+      - name: Wait for the validated year-by-year Comext build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status=''
+          conclusion=''
+          for attempt in $(seq 1 240); do
+            payload=$(curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${LONG_COMEXT_RUN}")
+            status=$(printf '%s' "$payload" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+            conclusion=$(printf '%s' "$payload" | python -c 'import json,sys; print(json.load(sys.stdin).get("conclusion",""))')
+            echo "Comext run status=${status} conclusion=${conclusion} attempt=${attempt}"
+            if [ "$status" = 'completed' ]; then
+              break
+            fi
+            sleep 15
+          done
+          test "$status" = 'completed'
+
+      - name: Download all completed Comext year artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.LONG_COMEXT_RUN }}
+          pattern: paper2-comext-year-*
+          merge-multiple: true
+          path: input/comext
+
+      - name: Download PortWatch, Pink Sheet and CEPII data
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.SUPPLEMENTARY_RUN }}
+          name: paper2-supplementary-public-data-clean
+          path: input/supplementary
+
+      - name: Download Eurostat short-term statistics
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.STS_RUN }}
+          name: paper2-eurostat-sts-data
+          path: input/sts
+
+      - name: Download UN Comtrade free-API validation test
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: zeinalamah/newproj_command
+          run-id: ${{ env.COMTRADE_RUN }}
+          name: paper2-comtrade-global-test
+          path: input/comtrade
+
+      - name: Inventory downloaded inputs
+        run: |
+          find input -type f -printf '%p %s bytes\n' | sort > input_inventory.txt
+          cat input_inventory.txt
+          echo "Comext year files: $(find input/comext -name 'comext_chapters_28_31_76_*.csv.gz' | wc -l)"
+
+      - name: Construct panels and run mechanism-based econometric analysis
+        run: |
+          rm -rf publication_output
+          python paper2/full_analysis.py \
+            --comext-root input/comext \
+            --supplementary-root input/supplementary \
+            --sts-root input/sts \
+            --comtrade-root input/comtrade \
+            --output-root publication_output
+
+      - name: Validate core outputs
+        run: |
+          test -s publication_output/EMPIRICAL_ANALYSIS_REPORT.md
+          test -s publication_output/BUILD_AND_ANALYSIS_AUDIT.json
+          test -s publication_output/tables/shipping_synthetic_control_results.csv
+          test -s publication_output/tables/route_trade_models.csv
+          test -s publication_output/tables/network_reorganization_models.csv
+          test -s publication_output/tables/historical_placebo_summary.csv
+          cat publication_output/BUILD_AND_ANALYSIS_AUDIT.json
+          sed -n '1,260p' publication_output/EMPIRICAL_ANALYSIS_REPORT.md
+
+      - name: Create a commit-safe results package
+        run: |
+          rm -f publication_output/paper2_results_lite.zip
+          zip -r -9 publication_output/paper2_results_lite.zip \
+            publication_output/EMPIRICAL_ANALYSIS_REPORT.md \
+            publication_output/BUILD_AND_ANALYSIS_AUDIT.json \
+            publication_output/FILE_MANIFEST.csv \
+            publication_output/tables \
+            publication_output/figures \
+            publication_output/audit \
+            publication_output/scripts
+          # GitHub rejects individual blobs above 100 MB.  Full-sized outputs are
+          # retained in the workflow artifact; only commit-safe files are pushed.
+          find publication_output -type f -size +95M -print -delete
+
+      - name: Commit reproducible outputs to the analysis branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add publication_output
+          if ! git diff --cached --quiet; then
+            git commit -m '[skip ci] Add Paper 2 publication-data analysis outputs'
+            git push origin HEAD:research/paper2-full-analysis-20260723
+          fi
+
+      - name: Upload full publication dataset and analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper2-publication-analysis-2002-2026
+          path: publication_output
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
