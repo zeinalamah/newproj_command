@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import inspect
 import json
 from pathlib import Path
 import numpy as np
@@ -7,9 +8,6 @@ import pyfixest as pf
 
 rng=np.random.default_rng(42)
 rows=[]
-# Four calendar years: treatment applies only to affected origins in the final
-# year's March-April months, so it is not absorbed by origin-calendar-month or
-# origin-year fixed effects.
 months=pd.date_range('2023-01-01','2026-04-01',freq='MS')
 for i in range(20):
  for o in range(15):
@@ -33,7 +31,17 @@ for name,func,formula in [
   tidy=fit.tidy()
   if hasattr(tidy,'to_pandas'): tidy=tidy.to_pandas()
   tidy.to_csv(out/f'{name}_tidy.csv')
-  res.append({'model':name,'status':'ok','tidy':tidy.reset_index().to_dict('records'),'repr':str(fit)[:1000]})
+  record={'model':name,'status':'ok','tidy':tidy.reset_index().to_dict('records'),'repr':str(fit)[:1000],'wild_attributes':[a for a in dir(fit) if 'wild' in a.lower()]}
+  if hasattr(fit,'wildboottest'):
+   record['wild_signature']=str(inspect.signature(fit.wildboottest))
+   if name=='ols':
+    try:
+     wb=fit.wildboottest(param='x',reps=999,cluster='i',seed=42,show=False)
+     if hasattr(wb,'to_pandas'): wb=wb.to_pandas()
+     record['wild_result']=wb.reset_index().to_dict('records') if hasattr(wb,'reset_index') else str(wb)
+    except Exception as e:
+     record['wild_error']=repr(e)
+  res.append(record)
  except Exception as e:
   res.append({'model':name,'status':'failed','error':repr(e)})
 (out/'result.json').write_text(json.dumps(res,indent=2,default=str)); print(json.dumps(res,indent=2,default=str))
