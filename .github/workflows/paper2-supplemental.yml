@@ -7,6 +7,9 @@ on:
       - '.github/workflows/paper2-supplemental.yml'
   push:
     branches: ['research/paper2-baci-20260724']
+    paths:
+      - 'research/paper2_baci/collect_supplemental.py'
+      - '.github/workflows/paper2-supplemental.yml'
   workflow_dispatch:
 permissions:
   contents: read
